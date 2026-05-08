@@ -31,7 +31,7 @@ defmodule Slack.Supervisor do
       {DynamicSupervisor, strategy: :one_for_one, name: Slack.DynamicSupervisor},
       {PartitionSupervisor, child_spec: Task.Supervisor, name: Slack.TaskSupervisors},
       {Slack.ChannelServer, {bot, channel_config}},
-      {Slack.Socket, {app_token, bot, socket_opts}}
+      {Slack.SocketManager, {app_token, bot, socket_opts}}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

@@ -43,27 +43,31 @@ defmodule Slack.Socket do
   def start_link({app_token, bot}), do: start_link({app_token, bot, []})
 
   def start_link({app_token, bot, opts}) when is_list(opts) do
-    heartbeat_interval_ms =
-      Keyword.get(opts, :heartbeat_interval_ms, @default_heartbeat_interval_ms)
-
-    heartbeat_stale_ms =
-      Keyword.get(opts, :heartbeat_stale_ms, @default_heartbeat_stale_ms)
-
-    state = %{
-      app_token: app_token,
-      bot: bot,
-      heartbeat_interval_ms: heartbeat_interval_ms,
-      heartbeat_stale_ms: heartbeat_stale_ms,
-      last_alive_mono: nil,
-      heartbeat_ref: nil,
-      watchdog_ref: nil
-    }
+    state = build_state(app_token, bot, opts)
 
     {:ok, %{"url" => url}} = Slack.API.post("apps.connections.open", state.app_token)
 
     Logger.info("[Slack.Socket] connecting...")
 
     WebSockex.start_link(url, __MODULE__, state)
+  end
+
+  @doc false
+  # Builds the initial state map the socket's callbacks expect. Exposed
+  # (as @doc false) so `Slack.SocketManager` can build it when it drives
+  # the connection lifecycle without going through `start_link/1`.
+  def build_state(app_token, bot, opts) when is_list(opts) do
+    %{
+      app_token: app_token,
+      bot: bot,
+      heartbeat_interval_ms:
+        Keyword.get(opts, :heartbeat_interval_ms, @default_heartbeat_interval_ms),
+      heartbeat_stale_ms:
+        Keyword.get(opts, :heartbeat_stale_ms, @default_heartbeat_stale_ms),
+      last_alive_mono: nil,
+      heartbeat_ref: nil,
+      watchdog_ref: nil
+    }
   end
 
   # ----------------------------------------------------------------------------
