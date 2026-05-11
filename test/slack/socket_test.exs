@@ -75,6 +75,42 @@ defmodule Slack.SocketTest do
              Slack.Socket.handle_frame({:text, @slash_command}, %{})
   end
 
+  describe "server-initiated disconnect frames" do
+    for reason <- ["warning", "refresh_requested", "too_many_websockets"] do
+      test "disconnect reason=#{reason} triggers a clean close and cancels timers" do
+        reason = unquote(reason)
+
+        frame =
+          Jason.encode!(%{
+            "type" => "disconnect",
+            "reason" => reason,
+            "debug_info" => %{"host" => "applink-1"}
+          })
+
+        state = heartbeat_state()
+
+        assert {:close, new_state} = Slack.Socket.handle_frame({:text, frame}, state)
+
+        assert new_state.heartbeat_ref == nil
+        assert new_state.watchdog_ref == nil
+      end
+    end
+
+    test "disconnect frame with unknown reason still closes" do
+      frame =
+        Jason.encode!(%{
+          "type" => "disconnect",
+          "reason" => "something_new"
+        })
+
+      state = heartbeat_state()
+
+      assert {:close, new_state} = Slack.Socket.handle_frame({:text, frame}, state)
+      assert new_state.heartbeat_ref == nil
+      assert new_state.watchdog_ref == nil
+    end
+  end
+
   describe "heartbeat" do
     test "handle_info(:heartbeat, _) sends a ping frame and reschedules" do
       state = heartbeat_state()

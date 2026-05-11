@@ -118,6 +118,30 @@ defmodule Slack.Socket do
 
         {:reply, ack_frame(msg), state}
 
+      {:ok, %{"type" => "disconnect"} = payload} ->
+        # Slack sends `disconnect` control frames as part of normal Socket
+        # Mode operation: `warning` ~5 s before cycling a connection,
+        # `refresh_requested` when it's ready to be replaced, and
+        # `too_many_websockets` when we've opened more than the quota.
+        #
+        # Previously these fell into the catch-all below, so we never sent
+        # a close frame. Slack kept counting the zombie socket against our
+        # quota and eventually rejected new opens with
+        # `too_many_websockets`. Respond by initiating a clean close so
+        # Slack sees TCP FIN promptly; the parent `Slack.SocketManager`
+        # observes `:DOWN` and reconnects via its backoff.
+        reason = Map.get(payload, "reason", "unspecified")
+        debug_info = Map.get(payload, "debug_info")
+
+        log_level = if reason == "too_many_websockets", do: :warning, else: :info
+
+        Logger.log(
+          log_level,
+          "[Slack.Socket] server disconnect: reason=#{reason} debug_info=#{inspect(debug_info)}; closing socket"
+        )
+
+        {:close, cancel_timers(state)}
+
       _ ->
         Logger.debug("[Slack.Socket] Unhandled payload: #{msg}")
         {:ok, state}
