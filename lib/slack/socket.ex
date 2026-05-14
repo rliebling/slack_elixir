@@ -118,6 +118,16 @@ defmodule Slack.Socket do
 
         {:reply, ack_frame(msg), state}
 
+      {:ok, %{"type" => "interactive", "payload" => %{"type" => inner_type} = payload} = msg} ->
+        Logger.debug("[Slack.Socket] message: #{inspect(msg)}")
+
+        Task.Supervisor.start_child(
+          {:via, PartitionSupervisor, {Slack.TaskSupervisors, self()}},
+          fn -> handle_slack_event(inner_type, payload, state.bot) end
+        )
+
+        {:reply, ack_frame(msg), state}
+
       {:ok, %{"type" => "disconnect"} = payload} ->
         # Slack sends `disconnect` control frames as part of normal Socket
         # Mode operation: `warning` ~5 s before cycling a connection,
