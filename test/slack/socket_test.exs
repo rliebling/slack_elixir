@@ -75,6 +75,13 @@ defmodule Slack.SocketTest do
              Slack.Socket.handle_frame({:text, @slash_command}, %{})
   end
 
+  test "build_state preserves API options for direct socket starts" do
+    state =
+      Slack.Socket.build_state("xapp-virtual", @bot, api: [base_url: "http://localhost:4000/api"])
+
+    assert state.api_opts == [base_url: "http://localhost:4000/api"]
+  end
+
   describe "server-initiated disconnect frames" do
     for reason <- ["warning", "refresh_requested", "too_many_websockets"] do
       test "disconnect reason=#{reason} triggers a clean close and cancels timers" do

@@ -80,7 +80,7 @@ defmodule Slack.MessageServer do
 
       {{:value, message}, rest} ->
         Logger.debug("[Slack.MessageServer] Sending next message: #{inspect(message)}")
-        send_message(state.bot.token, state.channel, message)
+        send_message(state.bot, state.channel, message)
         %{state | queue: rest, timer_ref: schedule_next()}
     end
   end
@@ -89,16 +89,16 @@ defmodule Slack.MessageServer do
   # When they send it as a string, we'll put it into a map, with the `:text`
   # key. The args are assumed to be any arg that is accepted by Slack's
   # `chat.postMessage` API endpoint.
-  defp send_message(token, channel, message) when is_binary(message) do
-    send_message(token, %{channel: channel, text: message})
+  defp send_message(bot, channel, message) when is_binary(message) do
+    send_message(bot, %{channel: channel, text: message})
   end
 
-  defp send_message(token, channel, message) do
-    send_message(token, Enum.into(message, %{channel: channel}))
+  defp send_message(bot, channel, message) do
+    send_message(bot, Enum.into(message, %{channel: channel}))
   end
 
-  defp send_message(token, %{} = args) do
-    case Slack.API.post("chat.postMessage", token, args) do
+  defp send_message(bot, %{} = args) do
+    case api_post("chat.postMessage", bot.token, args, bot.api_opts) do
       {:ok, _} ->
         Logger.debug("[Slack.MessageServer] SENT: #{inspect(args)}")
 
@@ -110,6 +110,9 @@ defmodule Slack.MessageServer do
   defp schedule_next(after_ms \\ @message_rate_ms) do
     Process.send_after(self(), :send, after_ms)
   end
+
+  defp api_post(endpoint, token, args, []), do: Slack.API.post(endpoint, token, args)
+  defp api_post(endpoint, token, args, opts), do: Slack.API.post(endpoint, token, args, opts)
 
   defp via_tuple(%Slack.Bot{module: bot}, channel) do
     via_tuple(bot, channel)

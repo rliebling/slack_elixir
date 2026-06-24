@@ -12,6 +12,8 @@ defmodule Slack.ChannelServerTest do
     user_id: "user-123-ABC"
   }
 
+  @multiplexer_api "http://localhost:4000/api"
+
   setup :set_mimic_global
 
   setup do
@@ -71,6 +73,25 @@ defmodule Slack.ChannelServerTest do
       assert Process.alive?(pid)
       state = :sys.get_state(pid)
       assert state.channels == []
+    end
+
+    test "passes configured API options to channel listing" do
+      bot = %{@bot | api_opts: [base_url: @multiplexer_api]}
+
+      Slack.API
+      |> expect(:stream, fn "users.conversations",
+                            "xoxb-test-token",
+                            "channels",
+                            opts,
+                            api_opts ->
+        assert Keyword.get(opts, :types) == "public_channel"
+        assert Keyword.get(opts, :exclude_archived) == true
+        assert api_opts == [base_url: @multiplexer_api]
+        []
+      end)
+
+      {:ok, _pid} = Slack.ChannelServer.start_link({bot, []})
+      Process.sleep(100)
     end
   end
 

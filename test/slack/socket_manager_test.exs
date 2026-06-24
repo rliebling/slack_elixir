@@ -1,7 +1,10 @@
 defmodule Slack.SocketManagerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  use Mimic
 
   alias Slack.SocketManager
+
+  @multiplexer_api "http://localhost:4000/api"
 
   @bot %Slack.Bot{
     id: "bot-123-ABC",
@@ -10,6 +13,8 @@ defmodule Slack.SocketManagerTest do
     team_id: "team-123-ABC",
     user_id: "user-123-ABC"
   }
+
+  setup :set_mimic_global
 
   # Starts a manager with stubbed `open_fun` and `start_socket_fun`.
   # `responses` is a list of return values to hand out one at a time in
@@ -90,6 +95,40 @@ defmodule Slack.SocketManagerTest do
       assert state.attempt == 0
       assert state.socket_pid == socket
       refute state.reconnecting?
+    end
+
+    test "uses configured API options when opening a Socket Mode URL" do
+      socket = spawn_fake_socket()
+
+      Slack.API
+      |> expect(:post, fn "apps.connections.open", "xapp-virtual", %{}, api_opts ->
+        assert api_opts == [base_url: @multiplexer_api]
+        {:ok, %{"url" => "wss://multiplexer.example/socket"}}
+      end)
+
+      WebSockex
+      |> expect(:start_link, fn "wss://multiplexer.example/socket", Slack.Socket, socket_state ->
+        assert socket_state.app_token == "xapp-virtual"
+        assert socket_state.bot == @bot
+        {:ok, socket}
+      end)
+
+      {:ok, manager} =
+        start_supervised(
+          {SocketManager,
+           {"xapp-virtual", @bot,
+            [
+              api: [base_url: @multiplexer_api],
+              rand_fun: fn -> 0.5 end,
+              base_delay_ms: 10,
+              max_delay_ms: 40,
+              jitter_ratio: 0.0
+            ]}}
+        )
+
+      _ = :sys.get_state(manager)
+      state = GenServer.call(manager, :get_state)
+      assert state.socket_pid == socket
     end
   end
 

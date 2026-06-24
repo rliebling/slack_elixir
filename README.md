@@ -165,6 +165,24 @@ config :my_app, MyApp.SlackBot,
   ]
 ```
 
+To point the library at a Slack-compatible API boundary, such as a local
+multiplexer, keep the normal Slack-shaped app and bot tokens and set an
+alternate Web API base URL:
+
+```elixir
+# config/runtime.exs
+
+config :my_app, MyApp.SlackBot,
+  app_token: "xapp-virtual-token",
+  bot_token: "xoxb-virtual-token",
+  bot: MyApp.SlackBot,
+  api: [
+    base_url: "http://localhost:4000/api"
+  ]
+```
+
+When `:api` is omitted, the library keeps using `https://slack.com/api`.
+
 ## Journey to v1.0 (Things that may or may not be added)
 
 PRs welcome!

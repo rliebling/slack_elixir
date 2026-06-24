@@ -66,7 +66,9 @@ defmodule Slack.APITest do
            "response_metadata" => %{"next_cursor" => "cursor_page2"}
          }}
       end)
-      |> expect(:get, fn "test.list", @token, %{types: "public_channel", cursor: "cursor_page2"} ->
+      |> expect(:get, fn "test.list",
+                         @token,
+                         %{types: "public_channel", cursor: "cursor_page2"} ->
         {:ok,
          %{
            "channels" => [%{"id" => "C2"}],
@@ -93,7 +95,8 @@ defmodule Slack.APITest do
          }}
       end)
       # Second call returns the same cursor — infinite loop detected
-      |> expect(:get, fn "test.list", @token,
+      |> expect(:get, fn "test.list",
+                         @token,
                          %{types: "public_channel", cursor: "stuck_cursor"} ->
         {:ok,
          %{
@@ -120,7 +123,9 @@ defmodule Slack.APITest do
            "response_metadata" => %{"next_cursor" => "cursor_page2"}
          }}
       end)
-      |> expect(:get, fn "test.list", @token, %{types: "public_channel", cursor: "cursor_page2"} ->
+      |> expect(:get, fn "test.list",
+                         @token,
+                         %{types: "public_channel", cursor: "cursor_page2"} ->
         {:ok,
          %{
            "channels" => [],
@@ -146,7 +151,9 @@ defmodule Slack.APITest do
            "response_metadata" => %{"next_cursor" => "cursor_page2"}
          }}
       end)
-      |> expect(:get, fn "test.list", @token, %{types: "public_channel", cursor: "cursor_page2"} ->
+      |> expect(:get, fn "test.list",
+                         @token,
+                         %{types: "public_channel", cursor: "cursor_page2"} ->
         {:error, %Req.Response{status: 500, body: "Internal Server Error"}}
       end)
 
@@ -237,6 +244,16 @@ defmodule Slack.APITest do
     test "does not set retry_delay (handled by custom retry function)" do
       client = Slack.API.client(@token)
       refute Map.has_key?(client.options, :retry_delay)
+    end
+
+    test "defaults to Slack's Web API base URL" do
+      client = Slack.API.client(@token)
+      assert client.options.base_url == "https://slack.com/api"
+    end
+
+    test "accepts an alternate Slack-compatible Web API base URL" do
+      client = Slack.API.client(@token, base_url: "http://localhost:4000/api/")
+      assert client.options.base_url == "http://localhost:4000/api"
     end
   end
 

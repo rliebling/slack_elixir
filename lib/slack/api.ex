@@ -15,10 +15,10 @@ defmodule Slack.API do
   Respects Slack's `Retry-After` header on 429 responses, adding jitter to
   avoid thundering-herd problems.
   """
-  @spec client(String.t()) :: Req.Request.t()
-  def client(token) do
+  @spec client(String.t(), keyword()) :: Req.Request.t()
+  def client(token, opts \\ []) do
     Req.new(
-      base_url: @base_url,
+      base_url: base_url(opts),
       auth: {:bearer, token},
       retry: &retry_with_retry_after/2,
       max_retries: @max_retries
@@ -28,10 +28,11 @@ defmodule Slack.API do
   @doc """
   GET from Slack API.
   """
-  @spec get(String.t(), String.t(), map() | keyword()) :: {:ok, map()} | {:error, term()}
-  def get(endpoint, token, args \\ %{}) do
+  @spec get(String.t(), String.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def get(endpoint, token, args \\ %{}, opts \\ []) do
     result =
-      Req.get(client(token),
+      Req.get(client(token, opts),
         url: endpoint,
         params: args
       )
@@ -49,10 +50,11 @@ defmodule Slack.API do
   @doc """
   POST to Slack API.
   """
-  @spec post(String.t(), String.t(), map() | keyword()) :: {:ok, map()} | {:error, term()}
-  def post(endpoint, token, args \\ %{}) do
+  @spec post(String.t(), String.t(), map() | keyword(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def post(endpoint, token, args \\ %{}, opts \\ []) do
     result =
-      Req.post(client(token),
+      Req.post(client(token, opts),
         url: endpoint,
         form: args
       )
@@ -78,8 +80,9 @@ defmodule Slack.API do
 
   You can start at a cursor if you pass in `:cursor` as one of the `args`.
   """
-  @spec stream(String.t(), String.t(), String.t(), map() | keyword()) :: Enumerable.t()
-  def stream(endpoint, token, resource, args \\ %{}) do
+  @spec stream(String.t(), String.t(), String.t(), map() | keyword(), keyword()) ::
+          Enumerable.t()
+  def stream(endpoint, token, resource, args \\ %{}, opts \\ []) do
     {starting_cursor, args} =
       args
       |> Map.new()
@@ -99,15 +102,13 @@ defmodule Slack.API do
         {cursor, _prev_cursor, page_count} ->
           params = if cursor, do: Map.put(args, :cursor, cursor), else: args
 
-          case __MODULE__.get(endpoint, token, params) do
+          case get_page(endpoint, token, params, opts) do
             {:ok, %{^resource => data} = body} ->
               next = get_in(body, ["response_metadata", "next_cursor"]) || ""
 
               case data do
                 [] when page_count > 0 ->
-                  Logger.warning(
-                    "[Slack.API] Empty page with cursor, stopping pagination"
-                  )
+                  Logger.warning("[Slack.API] Empty page with cursor, stopping pagination")
 
                   {:halt, nil}
 
@@ -164,4 +165,13 @@ defmodule Slack.API do
   end
 
   defp jitter, do: :rand.uniform(1_000)
+
+  defp get_page(endpoint, token, params, []), do: __MODULE__.get(endpoint, token, params)
+  defp get_page(endpoint, token, params, opts), do: __MODULE__.get(endpoint, token, params, opts)
+
+  defp base_url(opts) do
+    opts
+    |> Keyword.get(:base_url, @base_url)
+    |> String.trim_trailing("/")
+  end
 end

@@ -53,6 +53,7 @@ defmodule Slack.SocketManager do
           socket_pid: pid() | nil,
           monitor_ref: reference() | nil,
           reconnect_timer: reference() | nil,
+          api_opts: keyword(),
           open_fun: (String.t() -> {:ok, map()} | {:error, term()}),
           start_socket_fun: (String.t(), map() -> {:ok, pid()} | {:error, term()}),
           rand_fun: (-> float()),
@@ -75,6 +76,8 @@ defmodule Slack.SocketManager do
     * `:open_fun` — 1-arity function returning `{:ok, %{"url" => url}}`
       or `{:error, reason}`. Defaults to
       `&Slack.API.post("apps.connections.open", &1)`.
+    * `:api` — API options passed to the default `apps.connections.open`
+      request, such as `base_url: "http://localhost:4000/api"`.
     * `:start_socket_fun` — 2-arity function returning `{:ok, pid}` or
       `{:error, reason}`. Defaults to
       `&WebSockex.start_link(&1, Slack.Socket, &2)`.
@@ -117,9 +120,9 @@ defmodule Slack.SocketManager do
       socket_pid: nil,
       monitor_ref: nil,
       reconnect_timer: nil,
-      open_fun: Keyword.get(manager_opts, :open_fun, &default_open/1),
-      start_socket_fun:
-        Keyword.get(manager_opts, :start_socket_fun, &default_start_socket/2),
+      api_opts: Keyword.get(manager_opts, :api, []),
+      open_fun: open_fun(manager_opts),
+      start_socket_fun: Keyword.get(manager_opts, :start_socket_fun, &default_start_socket/2),
       rand_fun: Keyword.get(manager_opts, :rand_fun, &:rand.uniform/0),
       base_delay_ms: Keyword.get(manager_opts, :base_delay_ms, @base_delay_ms),
       max_delay_ms: Keyword.get(manager_opts, :max_delay_ms, @max_delay_ms),
@@ -137,7 +140,10 @@ defmodule Slack.SocketManager do
     do_connect(%{state | reconnect_timer: nil})
   end
 
-  def handle_info({:DOWN, ref, :process, pid, reason}, %{monitor_ref: ref, socket_pid: pid} = state) do
+  def handle_info(
+        {:DOWN, ref, :process, pid, reason},
+        %{monitor_ref: ref, socket_pid: pid} = state
+      ) do
     Logger.warning("[Slack.SocketManager] socket down: #{inspect(reason)}; scheduling reconnect")
 
     state =
@@ -247,16 +253,27 @@ defmodule Slack.SocketManager do
     :rand_fun,
     :base_delay_ms,
     :max_delay_ms,
-    :jitter_ratio
+    :jitter_ratio,
+    :api
   ]
 
   defp split_opts(opts) do
     Keyword.split(opts, @manager_keys)
   end
 
-  defp default_open(app_token) do
-    Slack.API.post("apps.connections.open", app_token)
+  defp open_fun(manager_opts) do
+    Keyword.get_lazy(manager_opts, :open_fun, fn ->
+      api_opts = Keyword.get(manager_opts, :api, [])
+      fn app_token -> default_open(app_token, api_opts) end
+    end)
   end
+
+  defp default_open(app_token, api_opts) do
+    api_post("apps.connections.open", app_token, %{}, api_opts)
+  end
+
+  defp api_post(endpoint, token, args, []), do: Slack.API.post(endpoint, token, args)
+  defp api_post(endpoint, token, args, opts), do: Slack.API.post(endpoint, token, args, opts)
 
   defp default_start_socket(url, socket_state) do
     WebSockex.start_link(url, Slack.Socket, socket_state)

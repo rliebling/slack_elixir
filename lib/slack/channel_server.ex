@@ -10,7 +10,6 @@ defmodule Slack.ChannelServer do
   # For type options, see: https://api.slack.com/methods/users.conversations
   @default_channel_types "public_channel"
 
-
   # ----------------------------------------------------------------------------
   # Public API
   # ----------------------------------------------------------------------------
@@ -58,11 +57,9 @@ defmodule Slack.ChannelServer do
 
   @impl true
   def handle_continue(:fetch_channels, state) do
-    channels = fetch_channels(state.bot.token, state.channel_types)
+    channels = fetch_channels(state.bot.token, state.channel_types, state.bot.api_opts)
 
-    Logger.info(
-      "[Slack.ChannelServer] #{state.bot.module} joining #{length(channels)} channels"
-    )
+    Logger.info("[Slack.ChannelServer] #{state.bot.module} joining #{length(channels)} channels")
 
     Enum.each(channels, fn channel_id ->
       Logger.debug("[Slack.ChannelServer] #{state.bot.module} joining #{channel_id}")
@@ -85,7 +82,6 @@ defmodule Slack.ChannelServer do
     {:noreply, Map.update!(state, :channels, &List.delete(&1, channel))}
   end
 
-
   # ----------------------------------------------------------------------------
   # Private
   # ----------------------------------------------------------------------------
@@ -94,9 +90,16 @@ defmodule Slack.ChannelServer do
     {:via, Registry, {Slack.ChannelServerRegistry, bot}}
   end
 
-  defp fetch_channels(token, types) when is_binary(types) do
+  defp fetch_channels(token, types, api_opts) when is_binary(types) do
     "users.conversations"
-    |> Slack.API.stream(token, "channels", types: types, exclude_archived: true)
+    |> api_stream(token, "channels", [types: types, exclude_archived: true], api_opts)
     |> Enum.map(& &1["id"])
+  end
+
+  defp api_stream(endpoint, token, resource, args, []),
+    do: Slack.API.stream(endpoint, token, resource, args)
+
+  defp api_stream(endpoint, token, resource, args, opts) do
+    Slack.API.stream(endpoint, token, resource, args, opts)
   end
 end

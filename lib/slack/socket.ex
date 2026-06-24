@@ -45,7 +45,8 @@ defmodule Slack.Socket do
   def start_link({app_token, bot, opts}) when is_list(opts) do
     state = build_state(app_token, bot, opts)
 
-    {:ok, %{"url" => url}} = Slack.API.post("apps.connections.open", state.app_token)
+    {:ok, %{"url" => url}} =
+      api_post("apps.connections.open", state.app_token, %{}, state.api_opts)
 
     Logger.info("[Slack.Socket] connecting...")
 
@@ -59,11 +60,11 @@ defmodule Slack.Socket do
   def build_state(app_token, bot, opts) when is_list(opts) do
     %{
       app_token: app_token,
+      api_opts: Keyword.get(opts, :api, []),
       bot: bot,
       heartbeat_interval_ms:
         Keyword.get(opts, :heartbeat_interval_ms, @default_heartbeat_interval_ms),
-      heartbeat_stale_ms:
-        Keyword.get(opts, :heartbeat_stale_ms, @default_heartbeat_stale_ms),
+      heartbeat_stale_ms: Keyword.get(opts, :heartbeat_stale_ms, @default_heartbeat_stale_ms),
       last_alive_mono: nil,
       heartbeat_ref: nil,
       watchdog_ref: nil
@@ -295,4 +296,7 @@ defmodule Slack.Socket do
   end
 
   defp monotonic_ms, do: System.monotonic_time(:millisecond)
+
+  defp api_post(endpoint, token, args, []), do: Slack.API.post(endpoint, token, args)
+  defp api_post(endpoint, token, args, opts), do: Slack.API.post(endpoint, token, args, opts)
 end

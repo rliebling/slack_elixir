@@ -6,6 +6,7 @@ defmodule Slack.Bot do
   @type t :: %__MODULE__{
           id: String.t(),
           module: module(),
+          api_opts: keyword(),
           team_id: String.t(),
           token: String.t(),
           user_id: String.t()
@@ -13,7 +14,7 @@ defmodule Slack.Bot do
 
   @derive {Inspect, except: [:token]}
   @enforce_keys [:id, :module, :token, :team_id, :user_id]
-  defstruct [:id, :module, :token, :team_id, :user_id]
+  defstruct [:id, :module, :token, :team_id, :user_id, api_opts: []]
 
   @doc """
   Handle the event from Slack.
@@ -30,10 +31,11 @@ defmodule Slack.Bot do
 
   # Build a Bot struct from a string-keyed map.
   @doc false
-  def from_string_params(bot_module, bot_token, params) do
+  def from_string_params(bot_module, bot_token, params, api_opts \\ []) do
     %__MODULE__{
       id: Map.fetch!(params, "bot_id"),
       module: bot_module,
+      api_opts: api_opts,
       team_id: Map.fetch!(params, "team_id"),
       token: bot_token,
       user_id: Map.fetch!(params, "user_id")
