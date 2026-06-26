@@ -91,6 +91,20 @@ defmodule Slack.SocketTest do
     refute_receive :unexpected_event_callback
   end
 
+  test "socket envelope handler can suppress the automatic acknowledgment" do
+    handler = fn envelope, state ->
+      send(self(), {:handled_envelope, envelope, state.bot})
+      :noreply
+    end
+
+    state = %{bot: @bot, envelope_handler: handler}
+
+    assert {:ok, new_state} = Slack.Socket.handle_frame({:text, @foo_event}, state)
+    assert %{bot: @bot, envelope_handler: ^handler, last_alive_mono: last_alive_mono} = new_state
+    assert is_integer(last_alive_mono)
+    assert_receive {:handled_envelope, %{"envelope_id" => "eid-234"}, @bot}
+  end
+
   test "socket can noop" do
     stub(Slack.API)
 
@@ -112,6 +126,13 @@ defmodule Slack.SocketTest do
       Slack.Socket.build_state("xapp-virtual", @bot, api: [base_url: "http://localhost:4000/api"])
 
     assert state.api_opts == [base_url: "http://localhost:4000/api"]
+  end
+
+  test "build_state preserves Socket Mode envelope handlers" do
+    handler = fn envelope -> {:ack, envelope} end
+    state = Slack.Socket.build_state("xapp-virtual", @bot, envelope_handler: handler)
+
+    assert state.envelope_handler == handler
   end
 
   describe "server-initiated disconnect frames" do

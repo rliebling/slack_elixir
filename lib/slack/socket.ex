@@ -62,6 +62,7 @@ defmodule Slack.Socket do
       app_token: app_token,
       api_opts: Keyword.get(opts, :api, []),
       bot: bot,
+      envelope_handler: Keyword.get(opts, :envelope_handler),
       heartbeat_interval_ms:
         Keyword.get(opts, :heartbeat_interval_ms, @default_heartbeat_interval_ms),
       heartbeat_stale_ms: Keyword.get(opts, :heartbeat_stale_ms, @default_heartbeat_stale_ms),
@@ -199,16 +200,37 @@ defmodule Slack.Socket do
   # ----------------------------------------------------------------------------
 
   defp handle_envelope_or_event(envelope, type, payload, state) do
+    case invoke_envelope_handler(envelope, state) do
+      :unhandled ->
+        handle_envelope_with_bot(envelope, type, payload, state)
+
+      :noreply ->
+        {:ok, state}
+
+      result ->
+        {:reply, ack_frame(envelope, result), state}
+    end
+  end
+
+  defp invoke_envelope_handler(envelope, state) do
+    case Map.get(state, :envelope_handler) do
+      handler when is_function(handler, 2) -> handler.(envelope, state)
+      handler when is_function(handler, 1) -> handler.(envelope)
+      _handler -> :unhandled
+    end
+  end
+
+  defp handle_envelope_with_bot(envelope, type, payload, state) do
     case Map.fetch(state, :bot) do
       {:ok, bot} ->
-        handle_envelope_or_event(envelope, type, payload, bot, state)
+        handle_envelope_with_bot(envelope, type, payload, bot, state)
 
       :error ->
         {:reply, ack_frame(envelope), state}
     end
   end
 
-  defp handle_envelope_or_event(envelope, type, payload, bot, state) do
+  defp handle_envelope_with_bot(envelope, type, payload, bot, state) do
     if function_exported?(bot.module, :handle_envelope, 2) do
       {:reply, ack_frame(envelope, bot.module.handle_envelope(envelope, bot)), state}
     else
