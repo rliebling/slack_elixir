@@ -75,6 +75,12 @@ defmodule Slack.SocketManagerTest do
     end)
   end
 
+  defp lifecycle_handler(parent \\ self()) do
+    fn status, reason, manager_state ->
+      send(parent, {:lifecycle, status, reason, manager_state})
+    end
+  end
+
   describe "happy path" do
     test "connects on start and resets the attempt counter" do
       socket = spawn_fake_socket()
@@ -95,6 +101,23 @@ defmodule Slack.SocketManagerTest do
       assert state.attempt == 0
       assert state.socket_pid == socket
       refute state.reconnecting?
+    end
+
+    test "emits connected lifecycle after the socket is usable" do
+      socket = spawn_fake_socket()
+
+      manager =
+        start_manager(
+          [{:ok, %{"url" => "wss://fake"}}],
+          [{:ok, socket}],
+          lifecycle_handler: lifecycle_handler()
+        )
+
+      assert_receive {:lifecycle, :connected, nil,
+                      %{attempt: 0, socket_pid: ^socket, reconnecting?: false}}
+
+      _ = :sys.get_state(manager)
+      assert %{socket_pid: ^socket} = GenServer.call(manager, :get_state)
     end
 
     test "uses configured API options when opening a Socket Mode URL" do
@@ -142,11 +165,16 @@ defmodule Slack.SocketManagerTest do
             {:error, :nxdomain},
             {:ok, %{"url" => "wss://fake"}}
           ],
-          [{:ok, socket}]
+          [{:ok, socket}],
+          lifecycle_handler: lifecycle_handler()
         )
 
       # First call fails.
       assert_receive {:open_called, {:error, :nxdomain}}
+
+      assert_receive {:lifecycle, :reconnecting, {:open_failed, :nxdomain},
+                      %{socket_pid: nil, reconnecting?: true}}
+
       _ = :sys.get_state(manager)
 
       state1 = GenServer.call(manager, :get_state)
@@ -156,6 +184,7 @@ defmodule Slack.SocketManagerTest do
       # Second call succeeds after the scheduled delay.
       assert_receive {:open_called, {:ok, _}}, 200
       assert_receive {:start_socket_called, {:ok, ^socket}}, 200
+      assert_receive {:lifecycle, :connected, nil, %{socket_pid: ^socket, reconnecting?: false}}
       _ = :sys.get_state(manager)
 
       state2 = GenServer.call(manager, :get_state)
@@ -178,10 +207,15 @@ defmodule Slack.SocketManagerTest do
           [
             {:error, :handshake_failed},
             {:ok, socket}
-          ]
+          ],
+          lifecycle_handler: lifecycle_handler()
         )
 
       assert_receive {:start_socket_called, {:error, :handshake_failed}}
+
+      assert_receive {:lifecycle, :reconnecting, {:start_socket_failed, :handshake_failed},
+                      %{socket_pid: nil, reconnecting?: true}}
+
       _ = :sys.get_state(manager)
 
       state_between = GenServer.call(manager, :get_state)
@@ -189,6 +223,7 @@ defmodule Slack.SocketManagerTest do
       assert state_between.reconnecting?
 
       assert_receive {:start_socket_called, {:ok, ^socket}}, 200
+      assert_receive {:lifecycle, :connected, nil, %{socket_pid: ^socket, reconnecting?: false}}
       _ = :sys.get_state(manager)
 
       state_after = GenServer.call(manager, :get_state)
@@ -208,10 +243,12 @@ defmodule Slack.SocketManagerTest do
             {:ok, %{"url" => "wss://fake"}},
             {:ok, %{"url" => "wss://fake"}}
           ],
-          [{:ok, first}, {:ok, second}]
+          [{:ok, first}, {:ok, second}],
+          lifecycle_handler: lifecycle_handler()
         )
 
       assert_receive {:start_socket_called, {:ok, ^first}}
+      assert_receive {:lifecycle, :connected, nil, %{socket_pid: ^first, reconnecting?: false}}
       _ = :sys.get_state(manager)
 
       # Confirm the manager tracks `first`.
@@ -221,7 +258,14 @@ defmodule Slack.SocketManagerTest do
       # Kill the socket; manager should see the DOWN and reconnect.
       send(first, :die)
 
+      assert_receive {:lifecycle, :disconnected, :normal,
+                      %{socket_pid: ^first, reconnecting?: false}}
+
+      assert_receive {:lifecycle, :reconnecting, :socket_down,
+                      %{socket_pid: nil, reconnecting?: true}}
+
       assert_receive {:start_socket_called, {:ok, ^second}}, 200
+      assert_receive {:lifecycle, :connected, nil, %{socket_pid: ^second, reconnecting?: false}}
       _ = :sys.get_state(manager)
 
       state2 = GenServer.call(manager, :get_state)

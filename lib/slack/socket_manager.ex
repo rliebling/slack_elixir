@@ -56,6 +56,7 @@ defmodule Slack.SocketManager do
           api_opts: keyword(),
           open_fun: (String.t() -> {:ok, map()} | {:error, term()}),
           start_socket_fun: (String.t(), map() -> {:ok, pid()} | {:error, term()}),
+          lifecycle_handler: (atom(), term() -> term()) | (atom(), term(), map() -> term()) | nil,
           rand_fun: (-> float()),
           base_delay_ms: pos_integer(),
           max_delay_ms: pos_integer(),
@@ -81,6 +82,9 @@ defmodule Slack.SocketManager do
     * `:start_socket_fun` — 2-arity function returning `{:ok, pid}` or
       `{:error, reason}`. Defaults to
       `&WebSockex.start_link(&1, Slack.Socket, &2)`.
+    * `:lifecycle_handler` — optional 2- or 3-arity function called with
+      `:connected`, `:disconnected`, or `:reconnecting` and the lifecycle
+      reason. The 3-arity form also receives the manager state.
     * `:rand_fun` — 0-arity function returning a float in [0.0, 1.0).
       Defaults to `&:rand.uniform/0` – 1.0 to give that range. Tests can
       stub it to make jitter deterministic.
@@ -123,6 +127,7 @@ defmodule Slack.SocketManager do
       api_opts: Keyword.get(manager_opts, :api, []),
       open_fun: open_fun(manager_opts),
       start_socket_fun: Keyword.get(manager_opts, :start_socket_fun, &default_start_socket/2),
+      lifecycle_handler: Keyword.get(manager_opts, :lifecycle_handler),
       rand_fun: Keyword.get(manager_opts, :rand_fun, &:rand.uniform/0),
       base_delay_ms: Keyword.get(manager_opts, :base_delay_ms, @base_delay_ms),
       max_delay_ms: Keyword.get(manager_opts, :max_delay_ms, @max_delay_ms),
@@ -145,6 +150,7 @@ defmodule Slack.SocketManager do
         %{monitor_ref: ref, socket_pid: pid} = state
       ) do
     Logger.warning("[Slack.SocketManager] socket down: #{inspect(reason)}; scheduling reconnect")
+    emit_lifecycle(state, :disconnected, reason)
 
     state =
       %{state | socket_pid: nil, monitor_ref: nil}
@@ -193,16 +199,17 @@ defmodule Slack.SocketManager do
         {:ok, pid} when is_pid(pid) ->
           Logger.info("[Slack.SocketManager] socket connected (attempt=#{state.attempt})")
           ref = Process.monitor(pid)
+          state = %{state | socket_pid: pid, monitor_ref: ref, attempt: 0, reconnect_timer: nil}
+          emit_lifecycle(state, :connected, nil)
 
-          {:noreply,
-           %{state | socket_pid: pid, monitor_ref: ref, attempt: 0, reconnect_timer: nil}}
+          {:noreply, state}
 
         {:error, reason} ->
           Logger.warning(
             "[Slack.SocketManager] WebSockex.start_link failed (attempt=#{state.attempt}): #{inspect(reason)}"
           )
 
-          {:noreply, schedule_reconnect(state)}
+          {:noreply, schedule_reconnect(state, {:start_socket_failed, reason})}
       end
     else
       {:error, reason} ->
@@ -210,24 +217,72 @@ defmodule Slack.SocketManager do
           "[Slack.SocketManager] apps.connections.open failed (attempt=#{state.attempt}): #{inspect(reason)}"
         )
 
-        {:noreply, schedule_reconnect(state)}
+        {:noreply, schedule_reconnect(state, {:open_failed, reason})}
 
       other ->
         Logger.warning(
           "[Slack.SocketManager] apps.connections.open unexpected return (attempt=#{state.attempt}): #{inspect(other)}"
         )
 
-        {:noreply, schedule_reconnect(state)}
+        {:noreply, schedule_reconnect(state, {:open_unexpected, other})}
     end
   end
 
-  defp schedule_reconnect(state) do
+  defp schedule_reconnect(state, reason \\ :socket_down) do
     delay = next_delay(state)
     timer = Process.send_after(self(), :reconnect, delay)
 
     Logger.info("[Slack.SocketManager] reconnecting in #{delay}ms (attempt=#{state.attempt + 1})")
 
-    %{state | attempt: state.attempt + 1, reconnect_timer: timer}
+    state = %{state | attempt: state.attempt + 1, reconnect_timer: timer}
+    emit_lifecycle(state, :reconnecting, reason)
+    state
+  end
+
+  defp emit_lifecycle(%{lifecycle_handler: handler} = state, status, reason)
+       when is_function(handler, 3) do
+    handler.(status, reason, public_state(state))
+    :ok
+  rescue
+    error ->
+      Logger.warning(
+        "[Slack.SocketManager] lifecycle handler failed: #{Exception.message(error)}"
+      )
+
+      :ok
+  catch
+    kind, error ->
+      Logger.warning("[Slack.SocketManager] lifecycle handler failed: #{inspect({kind, error})}")
+
+      :ok
+  end
+
+  defp emit_lifecycle(%{lifecycle_handler: handler}, status, reason)
+       when is_function(handler, 2) do
+    handler.(status, reason)
+    :ok
+  rescue
+    error ->
+      Logger.warning(
+        "[Slack.SocketManager] lifecycle handler failed: #{Exception.message(error)}"
+      )
+
+      :ok
+  catch
+    kind, error ->
+      Logger.warning("[Slack.SocketManager] lifecycle handler failed: #{inspect({kind, error})}")
+
+      :ok
+  end
+
+  defp emit_lifecycle(_state, _status, _reason), do: :ok
+
+  defp public_state(state) do
+    %{
+      attempt: state.attempt,
+      socket_pid: state.socket_pid,
+      reconnecting?: is_reference(state.reconnect_timer)
+    }
   end
 
   # ---------------------------------------------------------------------------
@@ -250,6 +305,7 @@ defmodule Slack.SocketManager do
   @manager_keys [
     :open_fun,
     :start_socket_fun,
+    :lifecycle_handler,
     :rand_fun,
     :base_delay_ms,
     :max_delay_ms,
