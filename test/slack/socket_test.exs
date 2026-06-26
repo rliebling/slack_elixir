@@ -37,6 +37,21 @@ defmodule Slack.SocketTest do
     user_id: "user-123-ABC"
   }
 
+  defmodule EnvelopeBot do
+    use Slack.Bot
+
+    @impl Slack.Bot
+    def handle_event(_type, _payload, _bot) do
+      send(self(), :unexpected_event_callback)
+    end
+
+    @impl Slack.Bot
+    def handle_envelope(envelope, bot) do
+      send(self(), {:handled_envelope, envelope, bot})
+      {:ack, %{payload: %{"text" => "received"}}}
+    end
+  end
+
   setup :set_mimic_global
 
   setup do
@@ -57,6 +72,23 @@ defmodule Slack.SocketTest do
 
     assert {:reply, ack_frame, _state} = Slack.Socket.handle_frame({:text, @foo_event}, state)
     assert {:text, ~S({"envelope_id":"eid-234"})} = ack_frame
+  end
+
+  test "bot can handle full envelopes and control Socket Mode acknowledgments" do
+    bot = %{@bot | module: EnvelopeBot}
+    state = %{bot: bot}
+
+    assert {:reply, {:text, ack_frame}, new_state} =
+             Slack.Socket.handle_frame({:text, @foo_event}, state)
+
+    assert %{bot: ^bot, last_alive_mono: last_alive_mono} = new_state
+    assert is_integer(last_alive_mono)
+
+    assert %{"envelope_id" => "eid-234", "payload" => %{"text" => "received"}} =
+             Jason.decode!(ack_frame)
+
+    assert_receive {:handled_envelope, %{"envelope_id" => "eid-234"}, ^bot}
+    refute_receive :unexpected_event_callback
   end
 
   test "socket can noop" do

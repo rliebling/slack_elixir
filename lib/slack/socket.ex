@@ -102,32 +102,17 @@ defmodule Slack.Socket do
       {:ok, %{"payload" => %{"event" => event}} = msg} ->
         Logger.debug("[Slack.Socket] message: #{inspect(msg)}")
 
-        Task.Supervisor.start_child(
-          {:via, PartitionSupervisor, {Slack.TaskSupervisors, self()}},
-          fn -> handle_slack_event(event["type"], event, state.bot) end
-        )
-
-        {:reply, ack_frame(msg), state}
+        handle_envelope_or_event(msg, event["type"], event, state)
 
       {:ok, %{"type" => "slash_commands", "payload" => payload} = msg} ->
         Logger.debug("[Slack.Socket] message: #{inspect(msg)}")
 
-        Task.Supervisor.start_child(
-          {:via, PartitionSupervisor, {Slack.TaskSupervisors, self()}},
-          fn -> handle_slack_event(msg["type"], payload, state.bot) end
-        )
-
-        {:reply, ack_frame(msg), state}
+        handle_envelope_or_event(msg, msg["type"], payload, state)
 
       {:ok, %{"type" => "interactive", "payload" => %{"type" => inner_type} = payload} = msg} ->
         Logger.debug("[Slack.Socket] message: #{inspect(msg)}")
 
-        Task.Supervisor.start_child(
-          {:via, PartitionSupervisor, {Slack.TaskSupervisors, self()}},
-          fn -> handle_slack_event(inner_type, payload, state.bot) end
-        )
-
-        {:reply, ack_frame(msg), state}
+        handle_envelope_or_event(msg, inner_type, payload, state)
 
       {:ok, %{"type" => "disconnect"} = payload} ->
         # Slack sends `disconnect` control frames as part of normal Socket
@@ -213,6 +198,29 @@ defmodule Slack.Socket do
   # Helpers
   # ----------------------------------------------------------------------------
 
+  defp handle_envelope_or_event(envelope, type, payload, state) do
+    case Map.fetch(state, :bot) do
+      {:ok, bot} ->
+        handle_envelope_or_event(envelope, type, payload, bot, state)
+
+      :error ->
+        {:reply, ack_frame(envelope), state}
+    end
+  end
+
+  defp handle_envelope_or_event(envelope, type, payload, bot, state) do
+    if function_exported?(bot.module, :handle_envelope, 2) do
+      {:reply, ack_frame(envelope, bot.module.handle_envelope(envelope, bot)), state}
+    else
+      Task.Supervisor.start_child(
+        {:via, PartitionSupervisor, {Slack.TaskSupervisors, self()}},
+        fn -> handle_slack_event(type, payload, bot) end
+      )
+
+      {:reply, ack_frame(envelope), state}
+    end
+  end
+
   # In the case the bot user has JOINED a channel, we need to handle this as a
   # special case.
   defp handle_slack_event(
@@ -251,13 +259,31 @@ defmodule Slack.Socket do
     Slack.ChannelServer.part(bot, channel)
   end
 
-  defp ack_frame(payload) do
+  defp ack_frame(payload, result \\ :ok)
+
+  defp ack_frame(payload, {:ack, ack}) when is_map(ack) do
+    ack =
+      ack
+      |> stringify_keys()
+      |> Map.put_new("envelope_id", Map.get(payload, "envelope_id"))
+
+    {:text, Jason.encode!(ack)}
+  end
+
+  defp ack_frame(payload, _result) do
     ack =
       payload
       |> Map.take(["envelope_id"])
       |> Jason.encode!()
 
     {:text, ack}
+  end
+
+  defp stringify_keys(map) do
+    Map.new(map, fn
+      {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+      {key, value} -> {key, value}
+    end)
   end
 
   # ----------------------------------------------------------------------------

@@ -22,6 +22,18 @@ defmodule Slack.Bot do
   """
   @callback handle_event(type :: String.t(), payload :: map(), t()) :: any()
 
+  @doc """
+  Handle the full Socket Mode envelope from Slack.
+
+  Implement this optional callback when the caller needs to inspect the full
+  envelope or control the upstream acknowledgment. Return `{:ack, map}` to send
+  a custom acknowledgment body. If this callback is not implemented, the socket
+  keeps the existing `handle_event/3` behavior and sends a minimal envelope ack.
+  """
+  @callback handle_envelope(envelope :: map(), t()) :: :ok | {:ack, map()} | any()
+
+  @optional_callbacks handle_envelope: 2
+
   defmacro __using__(_opts) do
     quote do
       import Slack.Bot
